@@ -571,8 +571,17 @@ const BOT_TYPES=[
 
 // ── STATE ──
 let lobby={rock:1,shark:1,whale:1,maniac:1};
+let stakes={bb:0.10,buyin:5};   // big blind & buy-in in dollars
 let G={};
 let cEq=null,cOdds=null;
+
+// format dollars — show cents when < $1, else 2dp when fractional
+function fmt(n){
+  if(n===0)return'$0';
+  if(n<1)return((n*100).toFixed(0))+'¢';
+  if(n%1===0)return'$'+n;
+  return'$'+n.toFixed(2);
+}
 
 // ── HELPERS ──
 const totalBots=()=>Object.values(lobby).reduce((a,b)=>a+b,0);
@@ -599,7 +608,11 @@ function startGame(){
   let idx=0;
   const player=[deck[idx++],deck[idx++]];
   for(const b of bots)b.hand=[deck[idx++],deck[idx++]];
-  G={phase:0,player,board:deck.slice(idx,idx+5),pot:20,toCall:10,bots,playerActed:false,handOver:false,result:null,finalEq:null};
+  const bb=stakes.bb;
+  G={phase:0,player,board:deck.slice(idx,idx+5),
+     pot:Math.round(bb*1.5*100)/100,   // SB + BB
+     toCall:bb,
+     bots,playerActed:false,handOver:false,result:null,finalEq:null};
   cEq=null;cOdds=null;
   closeOverlays();
   renderGame();
@@ -611,7 +624,7 @@ function doBotPreflop(){
     if(Math.random()<bot.range||bot.style==='Loose-Passive'){
       if(Math.random()<bot.aggression){
         const mult=bot.style==='Loose-Aggressive'?Math.floor(Math.random()*4)+3:3;
-        const amt=G.toCall*mult;
+        const amt=Math.round(G.toCall*mult*100)/100;
         bot.lastAction='Raise';bot.lastAmount=amt;G.pot+=amt;G.toCall=amt;
         bot.rangeWidth=Math.max(.03,bot.rangeWidth*.7);
       } else {
@@ -634,7 +647,8 @@ function doBotPostflop(){
     const value=str.score>=2&&Math.random()<bot.aggression;
     if(bluff||value){
       const mult=bot.style==='Loose-Aggressive'?Math.floor(Math.random()*3)+2:2;
-      const amt=Math.max(10,Math.round(G.pot*.5*mult/10)*10);
+      const minBet=Math.round(stakes.bb*2*100)/100;
+      const amt=Math.round(Math.max(minBet,G.pot*.5*mult)*100)/100;
       bot.lastAction=G.toCall>0?'Raise':'Bet';bot.lastAmount=amt;
       G.pot+=amt;G.toCall=amt;
       bot.rangeWidth=Math.max(.03,bluff?bot.rangeWidth*1.1:bot.rangeWidth*.7);
@@ -676,7 +690,7 @@ function playerAction(action){
     }
     if(G.phase<3){advanceStreet();}else{G.handOver=true;resolveShowdown();}
   } else {
-    G.pot+=G.toCall*3;
+    G.pot=Math.round((G.pot+G.toCall*3)*100)/100;
     if(equity!==null){
       if(equity>50){fclass='fb-good';fb=`<div class="fb-title">Value raise</div><div class="fb-body">With ${equity}% equity you're a favorite. Raising builds the pot in your favor.</div>`;}
       else if(equity>35){fclass='fb-ok';fb=`<div class="fb-title">Semi-bluff raise</div><div class="fb-body">With ${equity}% equity a raise gives you two ways to win: fold equity or making your hand.</div>`;}
@@ -755,7 +769,7 @@ function showResult(){
   const statsHTML=`<div class="result-stats-row">
     <div class="result-stat">
       <div class="result-stat-label">Final pot</div>
-      <div class="result-stat-value">$${G.pot}</div>
+      <div class="result-stat-value">${fmt(G.pot)}</div>
     </div>
     ${G.finalEq!==null?`<div class="result-stat">
       <div class="result-stat-label">Your equity</div>
@@ -818,7 +832,7 @@ function closeOverlays(){document.querySelectorAll('.overlay').forEach(e=>e.remo
 
 function showTooltip(type){
   closeOverlays();
-  const eq=cEq!==null?cEq+'%':'(not yet — play a street first)';
+  const eq=cEq!==null?cEq+'%':'calculating...';
   const od=cOdds!==null?cOdds+'%':'(no bet to call right now)';
   const pot=G.pot,call=G.toCall;
   let title,formula,body;
@@ -829,7 +843,7 @@ function showTooltip(type){
   } else {
     title='How pot odds are calculated';
     formula='Pot odds = call ÷ (pot + call) × 100';
-    body=`Pot odds tell you the minimum equity needed to make a call profitable long-term.<br><br><strong>Right now:</strong> pot = $${pot}, call = $${call}<br>Pot odds = $${call} ÷ ($${pot} + $${call}) × 100 = <strong>${od}</strong><br><br>If your equity (${eq}) exceeds pot odds (${od}), calling is +EV. If not, folding saves money over time.`;
+    body=`Pot odds tell you the minimum equity needed to make a call profitable long-term.<br><br><strong>Right now:</strong> pot = ${fmt(pot)}, call = ${fmt(call)}<br>Pot odds = ${fmt(call)} ÷ (${fmt(pot)} + ${fmt(call)}) × 100 = <strong>${od}</strong><br><br>If your equity (${eq}) exceeds pot odds (${od}), calling is +EV. If not, folding saves money over time.`;
   }
   const o=document.createElement('div');
   o.className='overlay';
@@ -867,10 +881,10 @@ function showBadCallOverlay(equity,odds){
 function renderBtns(){
   if(G.handOver)return`<button class="btn btn-gold" onclick="startGame()" style="width:100%">Deal new hand ↺</button>`;
   if(!G.playerActed){
-    const cl=G.toCall>0?`Call $${G.toCall}`:'Check';
+    const cl=G.toCall>0?`Call ${fmt(G.toCall)}`:'Check';
     return`<button class="btn" onclick="playerAction('fold')">Fold</button>
            <button class="btn" onclick="playerAction('call')">${cl}</button>
-           <button class="btn btn-gold" onclick="playerAction('raise')">Raise $${G.toCall*3}</button>`;
+           <button class="btn btn-gold" onclick="playerAction('raise')">Raise ${fmt(Math.round(G.toCall*3*100)/100)}</button>`;
   }
   return'';
 }
@@ -878,12 +892,15 @@ function renderBtns(){
 function renderGame(){
   const board=boardFor(G.phase);
   const active=G.bots.filter(b=>!b.folded);
-  cEq=(G.phase>0||G.playerActed)?estimateEquity(G.player,active,board):null;
+  cEq=estimateEquity(G.player,active,board);
   cOdds=potOdds();
 
   document.getElementById('app').innerHTML=`
     <div class="phase-bar">
       ${['Pre-flop','Flop','Turn','River'].map((p,i)=>`<div class="phase-pip${i===G.phase?' active':i<G.phase?' done':''}">${p}</div>`).join('')}
+    </div>
+    <div style="text-align:center;font-size:11px;color:rgba(245,237,224,0.4);margin-bottom:.75rem;letter-spacing:0.06em">
+      ${fmt(stakes.bb/2)}/${fmt(stakes.bb)} blinds &nbsp;·&nbsp; ${fmt(stakes.buyin)} buy-in &nbsp;·&nbsp; ${(stakes.buyin/stakes.bb).toFixed(0)} BB deep
     </div>
 
     <div class="panel">
@@ -898,7 +915,7 @@ function renderGame(){
     <div class="stats-row">
       <div class="stat-tile">
         <div class="stat-label">Pot</div>
-        <div class="stat-value">$${G.pot}</div>
+        <div class="stat-value">${fmt(G.pot)}</div>
       </div>
       <div class="stat-tile clickable" onclick="showTooltip('equity')">
         <div class="stat-label">Equity ⓘ</div>
@@ -923,7 +940,7 @@ function renderGame(){
             <div class="range-bar"><div class="range-fill" style="width:${pct}%;background:${bot.folded?'#555':bot.color}"></div></div>
             <div class="range-pct">Range: ~${pct}%</div>
           </div>
-          <div>${bot.lastAction?`<span class="action-badge ${ac}">${bot.lastAction}${bot.lastAmount?' $'+bot.lastAmount:''}</span>`:''}</div>
+          <div>${bot.lastAction?`<span class="action-badge ${ac}">${bot.lastAction}${bot.lastAmount?' '+fmt(bot.lastAmount):''}</span>`:''}</div>
         </div>`;
       }).join('')}
     </div>
@@ -934,6 +951,14 @@ function renderGame(){
   `;
 }
 
+function setStakesPreset(bb,bi){stakes={bb,buyin:bi};renderLobby();}
+function updateStakesCustom(){
+  const bb=parseFloat(document.getElementById('bbInput').value)||0.10;
+  const bi=parseFloat(document.getElementById('biInput').value)||5;
+  stakes={bb:Math.round(bb*100)/100,buyin:Math.round(bi*100)/100};
+  renderLobby();
+}
+
 // ── LOBBY ──
 function renderLobby(){
   const total=totalBots();
@@ -942,7 +967,32 @@ function renderLobby(){
     <div class="lobby-hero">
       <div class="lobby-suits">♠ ♥ ♦ ♣</div>
       <div class="lobby-hero-title">Set up your table</div>
-      <div class="lobby-hero-sub">Choose which opponents sit across from you. Up to 7 total — more players lowers your equity and tightens every decision.</div>
+      <div class="lobby-hero-sub">Choose your stakes and opponents. Up to 7 total — more players lowers your equity and tightens every decision.</div>
+    </div>
+
+    <div style="margin-bottom:1.25rem">
+      <div class="panel-label" style="margin-bottom:10px">Stakes</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+        ${[{label:'1¢/2¢',bb:0.02,bi:2},{label:'5¢/10¢',bb:0.10,bi:5},{label:'10¢/25¢',bb:0.25,bi:25},{label:'25¢/50¢',bb:0.50,bi:50},{label:'$0.50/$1',bb:1,bi:100},{label:'$1/$2',bb:2,bi:200}].map(p=>{
+          const sel=stakes.bb===p.bb;
+          return`<button class="btn${sel?' btn-gold':''}" style="flex:none;padding:6px 12px;font-size:12px" onclick="setStakesPreset(${p.bb},${p.bi})">${p.label}</button>`;
+        }).join('')}
+      </div>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <div style="display:flex;align-items:center;gap:6px">
+          <label style="font-size:12px;color:rgba(245,237,224,0.6)">Big blind</label>
+          <input type="number" id="bbInput" value="${stakes.bb}" min="0.01" step="0.01"
+            style="width:80px;background:rgba(0,0,0,0.3);border:1px solid rgba(201,168,76,0.3);border-radius:8px;padding:6px 8px;color:var(--cream);font-size:13px;font-family:inherit"
+            onchange="updateStakesCustom()">
+        </div>
+        <div style="display:flex;align-items:center;gap:6px">
+          <label style="font-size:12px;color:rgba(245,237,224,0.6)">Buy-in</label>
+          <input type="number" id="biInput" value="${stakes.buyin}" min="1" step="1"
+            style="width:80px;background:rgba(0,0,0,0.3);border:1px solid rgba(201,168,76,0.3);border-radius:8px;padding:6px 8px;color:var(--cream);font-size:13px;font-family:inherit"
+            onchange="updateStakesCustom()">
+        </div>
+        <span style="font-size:12px;color:rgba(245,237,224,0.45)">${(stakes.buyin/stakes.bb).toFixed(0)} BB deep</span>
+      </div>
     </div>
 
     ${BOT_TYPES.map(b=>`
