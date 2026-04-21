@@ -487,23 +487,49 @@ const shuffle=arr=>{const a=[...arr];for(let i=a.length-1;i>0;i--){const j=Math.
 
 function handStrength(hand,board){
   const all=[...hand,...board];
-  const ranks=all.map(c=>c.val).sort((a,b)=>b-a);
+  const vals=all.map(c=>c.val).sort((a,b)=>b-a);
   const suits=all.map(c=>c.suit);
-  const rc={};for(const r of ranks)rc[r]=(rc[r]||0)+1;
-  const counts=Object.values(rc).sort((a,b)=>b-a);
-  const flush=Object.values(suits.reduce((a,s)=>{a[s]=(a[s]||0)+1;return a;},{})).some(c=>c>=5);
-  const ur=[...new Set(ranks)].sort((a,b)=>a-b);
-  let straight=false;
-  for(let i=0;i<=ur.length-5;i++)if(ur[i+4]-ur[i]===4&&new Set(ur.slice(i,i+5)).size===5)straight=true;
-  if(flush&&straight)return{score:8,name:'Straight flush'};
-  if(counts[0]===4)return{score:7,name:'Four of a kind'};
-  if(counts[0]===3&&counts[1]>=2)return{score:6,name:'Full house'};
-  if(flush)return{score:5,name:'Flush'};
-  if(straight)return{score:4,name:'Straight'};
-  if(counts[0]===3)return{score:3,name:'Three of a kind'};
-  if(counts[0]===2&&counts[1]===2)return{score:2,name:'Two pair'};
-  if(counts[0]===2)return{score:1,name:'One pair'};
-  return{score:0,name:'High card '+RANKS[ranks[0]-2]};
+
+  const rc={};for(const v of vals)rc[v]=(rc[v]||0)+1;
+  // entries sorted by count desc, then rank desc — gives correct tiebreak ordering
+  const entries=Object.entries(rc)
+    .map(([v,c])=>({v:+v,c}))
+    .sort((a,b)=>b.c-a.c||b.v-a.v);
+  // tiebreaker: ranks ordered by group importance then value
+  const tb=entries.map(e=>e.v);
+
+  const flushSuit=Object.entries(suits.reduce((a,s)=>{a[s]=(a[s]||0)+1;return a;},{})).find(([,c])=>c>=5);
+  const flush=!!flushSuit;
+  const flushVals=flush?all.filter(c=>c.suit===flushSuit[0]).map(c=>c.val).sort((a,b)=>b-a).slice(0,5):[];
+
+  const ur=[...new Set(vals)].sort((a,b)=>a-b);
+  let straightHigh=0;
+  for(let i=0;i<=ur.length-5;i++)
+    if(ur[i+4]-ur[i]===4&&new Set(ur.slice(i,i+5)).size===5)straightHigh=Math.max(straightHigh,ur[i+4]);
+  // wheel straight A-2-3-4-5
+  if(ur.includes(14)&&ur.includes(2)&&ur.includes(3)&&ur.includes(4)&&ur.includes(5))straightHigh=Math.max(straightHigh,5);
+
+  const counts=entries.map(e=>e.c);
+
+  if(flush&&straightHigh)return{score:8,tb:[straightHigh],name:'Straight flush'};
+  if(counts[0]===4)return{score:7,tb,name:'Four of a kind'};
+  if(counts[0]===3&&counts[1]>=2)return{score:6,tb,name:'Full house'};
+  if(flush)return{score:5,tb:flushVals,name:'Flush'};
+  if(straightHigh)return{score:4,tb:[straightHigh],name:'Straight'};
+  if(counts[0]===3)return{score:3,tb,name:'Three of a kind'};
+  if(counts[0]===2&&counts[1]===2)return{score:2,tb,name:'Two pair'};
+  if(counts[0]===2)return{score:1,tb,name:'One pair'};
+  return{score:0,tb:vals.slice(0,5),name:'High card '+RANKS[vals[0]-2]};
+}
+
+// returns >0 if a beats b, <0 if b beats a, 0 if true tie
+function compareHands(a,b){
+  if(a.score!==b.score)return a.score-b.score;
+  for(let i=0;i<Math.max(a.tb.length,b.tb.length);i++){
+    const av=a.tb[i]??0, bv=b.tb[i]??0;
+    if(av!==bv)return av-bv;
+  }
+  return 0;
 }
 
 function estimateEquity(playerHand,bots,board){
@@ -513,7 +539,7 @@ function estimateEquity(playerHand,bots,board){
     const d=shuffle(base);
     const rem=5-board.length;
     const fullBoard=[...board,...d.slice(0,rem)];
-    const myScore=handStrength(playerHand,fullBoard).score;
+    const myScore=handStrength(playerHand,fullBoard);
     let beat=false;
     for(const bot of bots){
       if(bot.folded)continue;
@@ -521,7 +547,7 @@ function estimateEquity(playerHand,bots,board){
       if(pool.length<2)continue;
       const bh=pool.slice(rem,rem+2);
       if(bh.length<2)continue;
-      if(handStrength(bh,fullBoard).score>=myScore){beat=true;break;}
+      if(compareHands(handStrength(bh,fullBoard),myScore)>=0){beat=true;break;}
     }
     if(!beat)wins++;
   }
@@ -673,17 +699,18 @@ function advanceStreet(){
 
 function resolveShowdown(){
   const board=boardFor(G.phase);
-  const pr=handStrength(G.player,board);
   const active=G.bots.filter(b=>!b.folded);
   let winner=null;
   for(const b of active){
     const br=handStrength(b.hand,board);
-    if(!winner||br.score>winner.score)winner={bot:b,...br};
+    if(!winner||compareHands(br,winner.result)>0)winner={bot:b,result:br,...br};
   }
   G.finalEq=cEq;
-  if(!winner||pr.score>winner.score){G.result='win';G.winHand=pr;G.loseHand=winner;}
-  else if(winner&&pr.score===winner.score){G.result='tie';G.winHand=pr;G.loseHand=winner;}
-  else{G.result='lose';G.winHand=winner;G.loseHand=pr;}
+  const pr2=handStrength(G.player,board);
+  const cmp=winner?compareHands(pr2,winner.result):1;
+  if(cmp>0){G.result='win';G.winHand=pr2;G.loseHand=winner?.result;}
+  else if(cmp===0){G.result='tie';G.winHand=pr2;G.loseHand=winner?.result;}
+  else{G.result='lose';G.winHand=winner.result;G.loseHand=pr2;}
   G.winnerBot=winner?winner.bot:null;
   setTimeout(()=>showResult(),900);
 }
