@@ -588,7 +588,7 @@ const totalBots=()=>Object.values(lobby).reduce((a,b)=>a+b,0);
 const cardHTML=(c,hidden=false)=>hidden
   ?`<div class="playing-card hidden"></div>`
   :`<div class="playing-card ${isRed(c.suit)?'red':''}">${c.rank}<br>${c.suit}</div>`;
-const potOdds=()=>G.toCall>0?Math.round((G.toCall/(G.pot+G.toCall))*100):null;
+const potOdds=()=>{if(!G.street)return null;const owed=playerOwes();return owed>0?Math.round((owed/(G.pot+owed))*100):null;};
 const boardFor=phase=>phase===0?[]:phase===1?G.board.slice(0,3):phase===2?G.board.slice(0,4):G.board.slice(0,5);
 const botLabel=bot=>{const same=G.bots.filter(b=>b.id===bot.id);return same.length>1?`${bot.name} #${bot.instance}`:bot.name;};
 
@@ -600,6 +600,38 @@ function buildBots(){
   return out;
 }
 
+// ── MONEY HELPERS ──
+// G.street = the current facing bet size (what everyone must match).
+// G.pot    = chips already committed to the pot (not including current street bets in flight).
+// Each actor tracks G.contributed[id] = how much they've put in THIS street so far.
+// When someone acts, they put in (G.street - their contributed) to call, or more to raise.
+
+function r2(n){return Math.round(n*100)/100;}
+
+function raiseAmt(){
+  const minRaise=r2(Math.max(G.lastBetSize||stakes.bb, stakes.bb));
+  if(!G.street){
+    // open bet: ~75% pot, min 2BB, max 40% of buy-in
+    return r2(Math.min(Math.max(stakes.bb*2, G.pot*0.75), stakes.buyin*0.4));
+  }
+  return r2(G.street+minRaise);
+}
+
+function contribute(id, totalThisStreet){
+  // id = 'player' or bot index; add the delta to pot immediately
+  const already=G.contributed[id]||0;
+  const delta=r2(totalThisStreet-already);
+  if(delta<=0)return;
+  G.pot=r2(G.pot+delta);
+  G.contributed[id]=totalThisStreet;
+}
+
+function newStreet(){
+  G.street=0;           // no bet yet this street
+  G.lastBetSize=stakes.bb; // min raise = 1BB
+  G.contributed={};     // reset contributions
+}
+
 // ── GAME LOGIC ──
 function startGame(){
   const bots=buildBots();
@@ -609,10 +641,16 @@ function startGame(){
   const player=[deck[idx++],deck[idx++]];
   for(const b of bots)b.hand=[deck[idx++],deck[idx++]];
   const bb=stakes.bb;
+  const sb=r2(bb/2);
   G={phase:0,player,board:deck.slice(idx,idx+5),
-     pot:Math.round(bb*1.5*100)/100,   // SB + BB
-     toCall:bb,
+     pot:0,
+     street:bb,          // pre-flop: BB is the opening bet everyone faces
+     lastBetSize:bb,
+     contributed:{},
      bots,playerActed:false,handOver:false,result:null,finalEq:null};
+  // post blinds
+  G.pot=r2(sb+bb);
+  G.contributed['player']=0; // player hasn't matched BB yet (they act last pre-flop)
   cEq=null;cOdds=null;
   closeOverlays();
   renderGame();
@@ -620,43 +658,57 @@ function startGame(){
 }
 
 function doBotPreflop(){
-  for(const bot of G.bots){
+  G.bots.forEach((bot,i)=>{
     if(Math.random()<bot.range||bot.style==='Loose-Passive'){
       if(Math.random()<bot.aggression){
         const mult=bot.style==='Loose-Aggressive'?Math.floor(Math.random()*4)+3:3;
-        const amt=Math.round(G.toCall*mult*100)/100;
-        bot.lastAction='Raise';bot.lastAmount=amt;G.pot+=amt;G.toCall=amt;
+        const raiseSize=r2(G.lastBetSize*mult);
+        const newStreetBet=r2(G.street+raiseSize);
+        contribute('b'+i, newStreetBet);
+        bot.lastAction='Raise';bot.lastAmount=raiseSize;
+        G.street=newStreetBet;G.lastBetSize=raiseSize;
         bot.rangeWidth=Math.max(.03,bot.rangeWidth*.7);
       } else {
-        bot.lastAction='Call';bot.lastAmount=G.toCall;G.pot+=G.toCall;
+        contribute('b'+i, G.street);
+        bot.lastAction='Call';bot.lastAmount=G.street;
         bot.rangeWidth=Math.min(1,bot.rangeWidth*1.05);
       }
     } else {
       bot.folded=true;bot.lastAction='Fold';bot.rangeWidth=Math.max(.01,bot.rangeWidth*.5);
     }
-  }
+  });
   renderGame();
 }
 
 function doBotPostflop(){
-  const board=boardFor(G.phase);
-  for(const bot of G.bots){
-    if(bot.folded)continue;
-    const str=handStrength(bot.hand,board);
+  G.bots.forEach((bot,i)=>{
+    if(bot.folded)return;
+    const str=handStrength(bot.hand,boardFor(G.phase));
     const bluff=Math.random()<bot.bluff;
     const value=str.score>=2&&Math.random()<bot.aggression;
     if(bluff||value){
-      const mult=bot.style==='Loose-Aggressive'?Math.floor(Math.random()*3)+2:2;
-      const minBet=Math.round(stakes.bb*2*100)/100;
-      const amt=Math.round(Math.max(minBet,G.pot*.5*mult)*100)/100;
-      bot.lastAction=G.toCall>0?'Raise':'Bet';bot.lastAmount=amt;
-      G.pot+=amt;G.toCall=amt;
+      const minBet=r2(stakes.bb*2);
+      const betSize=r2(Math.min(Math.max(minBet, G.pot*0.6), stakes.buyin*0.4));
+      const newStreetBet=r2(G.street+betSize);
+      contribute('b'+i, newStreetBet);
+      bot.lastAction=G.street>0?'Raise':'Bet';bot.lastAmount=betSize;
+      G.street=newStreetBet;G.lastBetSize=betSize;
       bot.rangeWidth=Math.max(.03,bluff?bot.rangeWidth*1.1:bot.rangeWidth*.7);
     } else {
-      if(G.toCall>0&&Math.random()<.5){bot.folded=true;bot.lastAction='Fold';bot.rangeWidth=Math.max(.01,bot.rangeWidth*.5);}
-      else{bot.lastAction='Check';bot.lastAmount=0;}
+      if(G.street>0&&Math.random()<.5){
+        bot.folded=true;bot.lastAction='Fold';
+        bot.rangeWidth=Math.max(.01,bot.rangeWidth*.5);
+      } else {
+        contribute('b'+i, G.street); // call or check for free
+        bot.lastAction=G.street>0?'Call':'Check';bot.lastAmount=G.street>0?G.street:0;
+      }
     }
-  }
+  });
+}
+
+function playerOwes(){
+  // how much the player still needs to put in to match G.street
+  return r2(Math.max(0, G.street-(G.contributed['player']||0)));
 }
 
 function playerAction(action){
@@ -664,6 +716,7 @@ function playerAction(action){
   G.playerActed=true;
   const board=boardFor(G.phase);
   const active=G.bots.filter(b=>!b.folded);
+  const owed=playerOwes();
   const equity=estimateEquity(G.player,active,board);
   const odds=potOdds();
   cEq=equity;cOdds=odds;
@@ -678,11 +731,10 @@ function playerAction(action){
       fclass='fb-good';
       fb=`<div class="fb-title">Reasonable fold</div><div class="fb-body">Your equity${equity!==null?' ('+equity+'%)':''} didn't cover the price. Smart laydown.</div>`;
     }
-    G.handOver=true;
-    G.result='fold';
-    G.finalEq=equity;
+    G.handOver=true;G.result='fold';G.finalEq=equity;
     setTimeout(()=>showResult(),1000);
   } else if(action==='call'){
+    contribute('player', G.street);
     if(equity!==null&&odds!==null){
       if(equity>odds+5){fclass='fb-good';fb=`<div class="fb-title">Good call — positive EV</div><div class="fb-body">You had ${equity}% equity and only needed ${odds}%. A +${equity-odds}% edge.</div>`;}
       else if(equity>=odds-5){fclass='fb-ok';fb=`<div class="fb-title">Marginal call</div><div class="fb-body">Your ${equity}% equity barely covers ${odds}% pot odds. Near breakeven — reads matter here.</div>`;}
@@ -690,7 +742,10 @@ function playerAction(action){
     }
     if(G.phase<3){advanceStreet();}else{G.handOver=true;resolveShowdown();}
   } else {
-    G.pot=Math.round((G.pot+G.toCall*3)*100)/100;
+    const ra=raiseAmt();
+    contribute('player', ra);
+    G.lastBetSize=r2(ra-G.street);
+    G.street=ra;
     if(equity!==null){
       if(equity>50){fclass='fb-good';fb=`<div class="fb-title">Value raise</div><div class="fb-body">With ${equity}% equity you're a favorite. Raising builds the pot in your favor.</div>`;}
       else if(equity>35){fclass='fb-ok';fb=`<div class="fb-title">Semi-bluff raise</div><div class="fb-body">With ${equity}% equity a raise gives you two ways to win: fold equity or making your hand.</div>`;}
@@ -707,8 +762,11 @@ function playerAction(action){
 }
 
 function advanceStreet(){
-  G.phase=Math.min(3,G.phase+1);G.playerActed=false;G.toCall=0;
-  doBotPostflop();renderGame();
+  G.phase=Math.min(3,G.phase+1);
+  G.playerActed=false;
+  newStreet();
+  doBotPostflop();
+  renderGame();
 }
 
 function resolveShowdown(){
@@ -834,7 +892,7 @@ function showTooltip(type){
   closeOverlays();
   const eq=cEq!==null?cEq+'%':'calculating...';
   const od=cOdds!==null?cOdds+'%':'(no bet to call right now)';
-  const pot=G.pot,call=G.toCall;
+  const pot=G.pot,call=playerOwes();
   let title,formula,body;
   if(type==='equity'){
     title='How equity is calculated';
@@ -881,10 +939,13 @@ function showBadCallOverlay(equity,odds){
 function renderBtns(){
   if(G.handOver)return`<button class="btn btn-gold" onclick="startGame()" style="width:100%">Deal new hand ↺</button>`;
   if(!G.playerActed){
-    const cl=G.toCall>0?`Call ${fmt(G.toCall)}`:'Check';
+    const owed=playerOwes();
+    const cl=owed>0?`Call ${fmt(owed)}`:'Check';
+    const ra=raiseAmt();
+    const raLabel=G.street>0?`Raise to ${fmt(ra)}`:`Bet ${fmt(ra)}`;
     return`<button class="btn" onclick="playerAction('fold')">Fold</button>
            <button class="btn" onclick="playerAction('call')">${cl}</button>
-           <button class="btn btn-gold" onclick="playerAction('raise')">Raise ${fmt(Math.round(G.toCall*3*100)/100)}</button>`;
+           <button class="btn btn-gold" onclick="playerAction('raise')">${raLabel}</button>`;
   }
   return'';
 }
