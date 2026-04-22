@@ -548,14 +548,18 @@ function estimateEquity(hand,seats,board){
 //  BOT ARCHETYPES
 // ─────────────────────────────────────────
 const BOT_TYPES=[
-  {id:'rock',name:'The Rock',style:'Tight-Passive',bg:'#1a3a5a',color:'#7db9f5',range:.05,aggression:.1,bluff:.02,
-   desc:'Only plays top 5% of hands.',tags:[{label:'Tight',bg:'rgba(30,100,180,0.25)',color:'#7db9f5'},{label:'Passive',bg:'rgba(20,130,80,0.2)',color:'#6ee7b7'}]},
-  {id:'shark',name:'The Shark',style:'Tight-Aggressive',bg:'#0f2d1c',color:'#6ee7b7',range:.15,aggression:.8,bluff:.2,
-   desc:'Plays 15% of hands, bets hard on hits.',tags:[{label:'Tight',bg:'rgba(30,100,180,0.25)',color:'#7db9f5'},{label:'Aggressive',bg:'rgba(184,28,28,0.2)',color:'#f87171'}]},
-  {id:'whale',name:'The Whale',style:'Loose-Passive',bg:'#2a1a5a',color:'#c4b5fd',range:.55,aggression:.15,bluff:.05,
-   desc:'Calls with 55% of hands. Never bluff them.',tags:[{label:'Loose',bg:'rgba(180,130,20,0.2)',color:'#fcd34d'},{label:'Passive',bg:'rgba(20,130,80,0.2)',color:'#6ee7b7'}]},
-  {id:'maniac',name:'The Maniac',style:'Loose-Aggressive',bg:'#3a1010',color:'#f87171',range:.45,aggression:.9,bluff:.6,
-   desc:'Bets constantly, 60% bluff rate.',tags:[{label:'Loose',bg:'rgba(180,130,20,0.2)',color:'#fcd34d'},{label:'Aggressive',bg:'rgba(184,28,28,0.2)',color:'#f87171'}]},
+  {id:'rock',name:'The Rock',style:'Tight-Passive',bg:'#1a3a5a',color:'#7db9f5',range:.05,aggression:.1,bluff:.02,icon:'&#128248;',
+   desc:'Only plays the top 5% of hands. Checks and folds unless holding a monster — if they bet, be afraid.',
+   tags:[{label:'Tight',bg:'rgba(30,100,180,0.25)',color:'#7db9f5'},{label:'Passive',bg:'rgba(20,130,80,0.2)',color:'#6ee7b7'}]},
+  {id:'shark',name:'The Shark',style:'Tight-Aggressive',bg:'#0f2d1c',color:'#6ee7b7',range:.15,aggression:.8,bluff:.2,icon:'&#128038;',
+   desc:'Plays top 15% of hands but bets hard when they hit. Bluffs in good spots. The most realistic opponent.',
+   tags:[{label:'Tight',bg:'rgba(30,100,180,0.25)',color:'#7db9f5'},{label:'Aggressive',bg:'rgba(184,28,28,0.2)',color:'#f87171'}]},
+  {id:'whale',name:'The Whale',style:'Loose-Passive',bg:'#2a1a5a',color:'#c4b5fd',range:.55,aggression:.15,bluff:.05,icon:'&#127920;',
+   desc:'Calls with 55% of hands and rarely raises. The ideal target for value betting — never bluff them.',
+   tags:[{label:'Loose',bg:'rgba(180,130,20,0.2)',color:'#fcd34d'},{label:'Passive',bg:'rgba(20,130,80,0.2)',color:'#6ee7b7'}]},
+  {id:'maniac',name:'The Maniac',style:'Loose-Aggressive',bg:'#3a1010',color:'#f87171',range:.45,aggression:.9,bluff:.6,icon:'&#127922;',
+   desc:'Bets and raises constantly with 60% bluff frequency. Chaotic and hard to read — calling them down is often correct.',
+   tags:[{label:'Loose',bg:'rgba(180,130,20,0.2)',color:'#fcd34d'},{label:'Aggressive',bg:'rgba(184,28,28,0.2)',color:'#f87171'}]},
 ];
 
 // ─────────────────────────────────────────
@@ -563,6 +567,7 @@ const BOT_TYPES=[
 // ─────────────────────────────────────────
 let lobby={rock:1,shark:1,whale:1,maniac:1};
 let stakes={bb:0.10,buyin:5};
+let showEquity=true,showOdds=true;
 
 // TABLE = persistent across hands
 // T.seats[i] = {name, balance, isPlayer, botType, style, bg, color, range, aggression, bluff}
@@ -595,11 +600,11 @@ const boardFor=phase=>phase===0?[]:phase===1?G.board.slice(0,3):phase===2?G.boar
 function buildTable(){
   const seats=[];
   // player always seat 0
-  seats.push({name:'You',balance:r2(stakes.buyin),isPlayer:true,botType:null,style:'Player',bg:'#1a3a1a',color:'#6ee7b7',range:1,aggression:0,bluff:0});
+  seats.push({name:'You',balance:r2(stakes.buyin),isPlayer:true,botType:null,style:'Player',bg:'#1a3a1a',color:'#6ee7b7',icon:'&#9899;',range:1,aggression:0,bluff:0});
   for(const bt of BOT_TYPES){
     for(let i=0;i<lobby[bt.id];i++){
       const n=lobby[bt.id]>1?bt.name+' '+(i+1):bt.name;
-      seats.push({name:n,balance:r2(stakes.buyin),isPlayer:false,botType:bt.id,style:bt.style,bg:bt.bg,color:bt.color,
+      seats.push({name:n,balance:r2(stakes.buyin),isPlayer:false,botType:bt.id,style:bt.style,bg:bt.bg,color:bt.color,icon:bt.icon,
                   range:bt.range,aggression:bt.aggression,bluff:bt.bluff});
     }
   }
@@ -700,7 +705,7 @@ function dealHand(){
   // build per-hand seat mirrors
   const gseats=T.seats.map((s,i)=>{
     if(!s||s.balance<=0)return null;
-    return{seatIdx:i,name:s.name,isPlayer:s.isPlayer,style:s.style,bg:s.bg,color:s.color,
+    return{seatIdx:i,name:s.name,isPlayer:s.isPlayer,style:s.style,bg:s.bg,color:s.color,icon:s.icon||'?',
            range:s.range,aggression:s.aggression,bluff:s.bluff,
            stack:r2(s.balance),contrib:0,folded:false,allin:false,hand:[deck[di++],deck[di++]],
            lastAction:null,lastAmount:0,rangeWidth:s.range};
@@ -751,8 +756,35 @@ function nextActiveSeat(from){
   return -1;
 }
 function botActPreflop(i,gs){
-  if(Math.random()<gs.range||gs.style==='Loose-Passive'){
-    if(!gs.allin&&Math.random()<gs.aggression){
+  const isSB=i===G.sbIdx;
+  const isBB=i===G.bbIdx;
+  const facingRaise=G.street>stakes.bb; // someone raised above the BB
+
+  // BB gets a free check if no one raised
+  if(isBB&&!facingRaise){
+    // BB can either check (most common) or raise for value
+    if(!gs.allin&&Math.random()<gs.aggression*0.4){
+      const rsize=r2(G.lastBetSize*3);
+      const newLevel=r2(G.street+rsize);
+      commitChips(i,newLevel);
+      gs.lastAction='Raise';gs.lastAmount=rsize;
+      G.street=newLevel;G.lastBetSize=rsize;
+      gs.rangeWidth=Math.max(.03,gs.rangeWidth*.7);
+    } else {
+      gs.lastAction='Check';gs.lastAmount=0;
+    }
+    return;
+  }
+
+  // Blinds have already invested chips, so they defend wider.
+  // SB defends ~70% of hands vs a raise (pot odds + position loss), BB defends ~80%.
+  // Against a standard open, calling is correct with a much wider range than normal.
+  let effectiveRange=gs.range;
+  if(isBB) effectiveRange=Math.min(0.8, gs.range*5);  // BB defends very wide
+  else if(isSB) effectiveRange=Math.min(0.65, gs.range*4); // SB defends fairly wide
+
+  if(Math.random()<effectiveRange||gs.style==='Loose-Passive'){
+    if(!gs.allin&&Math.random()<gs.aggression*(isBB||isSB?0.6:1)){
       const mult=gs.style==='Loose-Aggressive'?Math.floor(Math.random()*4)+3:3;
       const rsize=r2(G.lastBetSize*mult);
       const newLevel=r2(G.street+rsize);
@@ -825,12 +857,19 @@ function playerAction(action,raiseTotal){
     G.lastFeedback={fclass,fb};
     setTimeout(()=>resolveHand(),1200);
   } else if(action==='call'){
-    commitChips(G.playerIdx,G.street);
-    ps.lastAction=ps.allin?'All-in':'Call';ps.lastAmount=ps.contrib;
-    if(equity!==null&&odds!==null){
+    // if already all-in, contrib is maxed — just advance without modifying pot
+    if(!ps.allin){
+      commitChips(G.playerIdx,G.street);
+      ps.lastAction='Call';ps.lastAmount=ps.contrib;
+    } else {
+      ps.lastAction='All-in';
+    }
+    if(!ps.allin&&equity!==null&&odds!==null){
       if(equity>odds+5){fclass='fb-good';fb='<div class="fb-title">Good call — positive EV</div><div class="fb-body">'+equity+'% equity vs '+odds+'% needed. +'+(equity-odds)+'% edge.</div>';}
       else if(equity>=odds-5){fclass='fb-ok';fb='<div class="fb-title">Marginal call</div><div class="fb-body">'+equity+'% equity barely covers '+odds+'% pot odds.</div>';}
       else{fclass='fb-bad';fb='<div class="fb-title">Losing call — negative EV</div><div class="fb-body">You had '+equity+'% but needed '+odds+'% to break even.</div>';showBadCallOverlay(equity,odds);}
+    } else if(ps.allin){
+      fclass='fb-ok';fb='<div class="fb-title">You are all-in</div><div class="fb-body">Running out the board with '+(equity!==null?equity+'% equity':'your hand')+'.</div>';
     }
     G.lastFeedback={fclass,fb};
     const allDone=G.seats.every((s,i)=>!s||s.folded||s.allin||(s.contrib>=G.street));
@@ -1067,7 +1106,12 @@ function renderBtns(){
   if(G.handOver)return'';
   if(G.playerActed)return'';
   const ps=G.seats[G.playerIdx];
-  if(!ps||ps.folded||ps.allin)return'';
+  if(!ps||ps.folded)return'';
+
+  // Player is all-in — they can't bet more but still need to "act" to advance streets
+  if(ps.allin){
+    return '<button class="btn" style="width:100%;opacity:0.6;cursor:default" onclick="playerAction(\'call\')">All-in — Check through</button>';
+  }
   const owed=playerOwes();
   const callLabel=owed>0?'Call '+fmt(owed):'Check';
   const mn=minRaise(),mx=maxRaise(),step=raiseStep();
@@ -1151,8 +1195,20 @@ function renderGame(){
     // stats
     '<div class="stats-row">'+
       '<div class="stat-tile"><div class="stat-label">Pot</div><div class="stat-value">'+fmt(G.pot)+'</div></div>'+
-      '<div class="stat-tile clickable" onclick="showTooltip(\'equity\')"><div class="stat-label">Equity i</div><div class="stat-value">'+(cEq!==null?cEq+'%':'--')+'</div></div>'+
-      '<div class="stat-tile clickable" onclick="showTooltip(\'odds\')"><div class="stat-label">Pot odds i</div><div class="stat-value">'+(cOdds!==null?cOdds+'%':'--')+'</div></div>'+
+      '<div class="stat-tile clickable" onclick="toggleStat(\'equity\')" title="Click to toggle">'+
+        '<div class="stat-label">Equity '+(showEquity?'&#9660;':'&#9654;')+'</div>'+
+        (showEquity
+          ? '<div class="stat-value">'+(cEq!==null?cEq+'%':'--')+'</div>'+
+            '<div style="font-size:10px;color:rgba(245,237,224,0.4);margin-top:2px">wins/simulations</div>'
+          : '<div class="stat-value" style="font-size:13px;color:rgba(245,237,224,0.3)">hidden</div>')+
+      '</div>'+
+      '<div class="stat-tile clickable" onclick="toggleStat(\'odds\')" title="Click to toggle">'+
+        '<div class="stat-label">Pot odds '+(showOdds?'&#9660;':'&#9654;')+'</div>'+
+        (showOdds
+          ? '<div class="stat-value">'+(cOdds!==null?cOdds+'%':'--')+'</div>'+
+            '<div style="font-size:10px;color:rgba(245,237,224,0.4);margin-top:2px">call/(pot+call)</div>'
+          : '<div class="stat-value" style="font-size:13px;color:rgba(245,237,224,0.3)">hidden</div>')+
+      '</div>'+
     '</div>'+
 
     // opponents
@@ -1165,7 +1221,7 @@ function renderGame(){
         const tbst=T.seats[i];
         const tbColor=tbst.balance>stakes.buyin*0.5?'rgba(245,237,224,0.45)':tbst.balance>stakes.buyin*0.25?'#fcd34d':'#f87171';
         return '<div class="bot-row'+(gs.folded?' folded':'')+'" style="opacity:'+(gs.folded?'.4':'1')+'">'+
-          '<div class="bot-avatar" style="background:'+gs.bg+';color:'+gs.color+'">'+gs.name.charAt(0)+'</div>'+
+          '<div class="bot-avatar" style="background:'+gs.bg+';color:'+gs.color+'">'+gs.icon+'</div>'+
           '<div class="bot-info" style="flex:1">'+
             '<div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">'+
               '<div class="bot-name-line">'+gs.name+(gs.folded?' <span style="font-size:10px;opacity:.5">(folded)</span>':'')+'</div>'+
@@ -1193,6 +1249,40 @@ function renderGame(){
 //  OVERLAYS
 // ─────────────────────────────────────────
 function closeOverlays(){document.querySelectorAll('.overlay').forEach(e=>e.remove());}
+
+function toggleStat(which){
+  if(which==='equity')showEquity=!showEquity;
+  else showOdds=!showOdds;
+  // re-render just the stats row in place
+  const app=document.getElementById('app');
+  if(!app)return;
+  const board=boardFor(G.phase);
+  // rebuild only the stats row html and swap it
+  const newStats=
+    '<div class="stats-row">'+
+      '<div class="stat-tile"><div class="stat-label">Pot</div><div class="stat-value">'+fmt(G.pot)+'</div></div>'+
+      '<div class="stat-tile clickable" onclick="toggleStat(\'equity\')" title="Click to toggle">'+
+        '<div class="stat-label">Equity '+(showEquity?'&#9660;':'&#9654;')+'</div>'+
+        (showEquity
+          ? '<div class="stat-value">'+(cEq!==null?cEq+'%':'--')+'</div>'+
+            '<div style="font-size:10px;color:rgba(245,237,224,0.4);margin-top:2px">wins/simulations</div>'
+          : '<div class="stat-value" style="font-size:13px;color:rgba(245,237,224,0.3)">hidden</div>')+
+      '</div>'+
+      '<div class="stat-tile clickable" onclick="toggleStat(\'odds\')" title="Click to toggle">'+
+        '<div class="stat-label">Pot odds '+(showOdds?'&#9660;':'&#9654;')+'</div>'+
+        (showOdds
+          ? '<div class="stat-value">'+(cOdds!==null?cOdds+'%':'--')+'</div>'+
+            '<div style="font-size:10px;color:rgba(245,237,224,0.4);margin-top:2px">call/(pot+call)</div>'
+          : '<div class="stat-value" style="font-size:13px;color:rgba(245,237,224,0.3)">hidden</div>')+
+      '</div>'+
+    '</div>';
+  const existing=app.querySelector('.stats-row');
+  if(existing){existing.outerHTML=newStats;
+    // outerHTML replace returns nothing, need to re-query and set
+    const tmp=document.createElement('div');tmp.innerHTML=newStats;
+    existing.replaceWith(tmp.firstChild);
+  }
+}
 
 function showTooltip(type){
   closeOverlays();
@@ -1262,7 +1352,7 @@ function renderLobby(){
   const presets=[{label:'1c/2c',bb:0.02,bi:2},{label:'5c/10c',bb:0.10,bi:5},{label:'10c/25c',bb:0.25,bi:25},{label:'25c/50c',bb:0.50,bi:50},{label:'$1/$2',bb:2,bi:200}];
   document.getElementById('app').innerHTML=
     '<div class="lobby-hero">'+
-      '<div class="lobby-suits">+ * + *</div>'+
+      '<div class="lobby-suits">&#9824; &#9829; &#9830; &#9827;</div>'+
       '<div class="lobby-hero-title">Set up your table</div>'+
       '<div class="lobby-hero-sub">Balances carry across hands. Dealer, blinds, and position rotate every hand. Players go bust when they run out of chips.</div>'+
     '</div>'+
@@ -1281,7 +1371,7 @@ function renderLobby(){
     '</div>'+
     BOT_TYPES.map(b=>
       '<div class="bot-config-card">'+
-        '<div class="bot-cfg-avatar" style="background:'+b.bg+';color:'+b.color+'">'+b.name.charAt(0)+'</div>'+
+        '<div class="bot-cfg-avatar" style="background:'+b.bg+';color:'+b.color+'">'+b.icon+'</div>'+
         '<div style="flex:1"><div class="bot-cfg-name">'+b.name+'</div><div class="bot-cfg-desc">'+b.desc+'</div>'+
           '<div class="tags">'+b.tags.map(t=>'<span class="tag" style="background:'+t.bg+';color:'+t.color+'">'+t.label+'</span>').join('')+'</div></div>'+
         '<div class="stepper">'+
